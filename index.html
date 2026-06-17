@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scan Logger — Google Sheets</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:      #0f1117; --surface: #1a1d27; --card: #22263a;
+    --border:  #2e3350; --accent: #4f8ef7;  --success: #3ecf8e;
+    --danger:  #f75f5f; --warn: #f7b84f;    --text: #e8eaf6;
+    --muted:   #7b82a8; --mono: 'Courier New', monospace;
+    --sans:    'Segoe UI', system-ui, sans-serif;
+  }
+  body {
+    background: var(--bg); color: var(--text); font-family: var(--sans);
+    min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; padding: 28px 16px 56px;
+  }
+  header {
+    width: 100%; max-width: 760px; margin-bottom: 24px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  header h1 { font-size: 1.2rem; font-weight: 700; letter-spacing: -.3px; }
+  header p  { font-size: .78rem; color: var(--muted); margin-top: 2px; }
+  .connection-badge {
+    display: flex; align-items: center; gap: 7px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 20px; padding: 5px 14px; font-size: .75rem;
+    white-space: nowrap; flex-shrink: 0;
+  }
+  .conn-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .conn-dot.connected    { background: var(--success); box-shadow: 0 0 6px var(--success); }
+  .conn-dot.disconnected { background: var(--muted); }
+  .conn-dot.connecting   { background: var(--warn); animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px; width: 100%; max-width: 760px; margin-bottom: 14px;
+  }
+  .card-title {
+    font-size: .68rem; font-weight: 700; letter-spacing: 1.2px;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 14px;
+    display: flex; align-items: center; gap: 8px;
+  }
+
+  .setup-row { display: flex; gap: 8px; align-items: stretch; }
+  #scriptUrl {
+    flex: 1; background: var(--surface); border: 1.5px solid var(--border);
+    border-radius: 8px; color: var(--text); font-family: var(--mono);
+    font-size: .82rem; padding: 10px 12px; outline: none; transition: border-color .15s;
+  }
+  #scriptUrl:focus { border-color: var(--accent); }
+  #scriptUrl::placeholder { color: var(--muted); font-size: .78rem; }
+  #scriptUrl.valid   { border-color: var(--success); }
+  #scriptUrl.invalid { border-color: var(--danger); }
+
+  .scan-row { display: flex; gap: 8px; }
+  #scanInput {
+    flex: 1; background: var(--surface); border: 1.5px solid var(--border);
+    border-radius: 8px; color: var(--text); font-family: var(--mono);
+    font-size: 1rem; padding: 11px 14px; outline: none; transition: border-color .15s;
+  }
+  #scanInput:focus { border-color: var(--accent); }
+  #scanInput::placeholder { color: var(--muted); }
+  #scanInput.flash-ok  { border-color: var(--success); background: #1a2e26; }
+  #scanInput.flash-err { border-color: var(--danger);  background: #2e1a1a; }
+  #scanInput:disabled  { opacity: .45; cursor: not-allowed; }
+
+  .btn {
+    border: none; border-radius: 8px; cursor: pointer;
+    font-family: var(--sans); font-weight: 600; font-size: .84rem;
+    padding: 11px 18px; transition: opacity .15s, transform .1s; white-space: nowrap;
+  }
+  .btn:active { transform: scale(.97); }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-ghost   { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+
+  #statusBar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 12px; border-radius: 8px; font-size: .8rem;
+    margin-top: 12px; min-height: 38px; transition: background .2s;
+  }
+  #statusBar.idle    { background: var(--surface); color: var(--muted); }
+  #statusBar.ok      { background: #162b22; color: var(--success); border: 1px solid #1e4535; }
+  #statusBar.err     { background: #2b1616; color: var(--danger);  border: 1px solid #451e1e; }
+  #statusBar.info    { background: #131d35; color: var(--accent);  border: 1px solid #1e3060; }
+  #statusBar.warn    { background: #2b2316; color: var(--warn);    border: 1px solid #453516; }
+  #statusBar.sending { background: #131d35; color: var(--accent);  border: 1px solid #1e3060; }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .ok .status-dot      { background: var(--success); }
+  .err .status-dot     { background: var(--danger); }
+  .info .status-dot    { background: var(--accent); }
+  .warn .status-dot    { background: var(--warn); }
+  .sending .status-dot { background: var(--accent); animation: pulse .7s infinite; }
+  .idle .status-dot    { background: var(--muted); }
+
+  .session-strip { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .session-chip {
+    padding: 4px 12px; border-radius: 20px; font-size: .76rem; font-weight: 600;
+    cursor: pointer; border: 1.5px solid transparent; transition: all .15s; font-family: var(--sans);
+  }
+  .session-chip.active   { border-color: var(--accent); background: #131d35; color: var(--accent); }
+  .session-chip.inactive { background: var(--surface); color: var(--muted); border-color: var(--border); }
+  #newSessionBtn {
+    padding: 4px 12px; border-radius: 20px; font-size: .76rem; font-weight: 600;
+    cursor: pointer; border: 1.5px dashed var(--border);
+    background: transparent; color: var(--muted); font-family: var(--sans); transition: all .15s;
+  }
+  #newSessionBtn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
+  .stat-box {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px; text-align: center;
+  }
+  .stat-num   { font-size: 1.6rem; font-weight: 800; letter-spacing: -1px; color: var(--accent); }
+  .stat-label { font-size: .68rem; color: var(--muted); margin-top: 2px; }
+
+  .tbl-wrap { overflow-x: auto; border-radius: 8px; border: 1px solid var(--border); }
+  table { width: 100%; border-collapse: collapse; font-size: .81rem; }
+  thead th {
+    background: var(--surface); padding: 9px 12px; text-align: left;
+    font-size: .66rem; letter-spacing: 1px; text-transform: uppercase;
+    color: var(--muted); white-space: nowrap; border-bottom: 1px solid var(--border);
+  }
+  tbody tr { border-bottom: 1px solid var(--border); transition: background .1s; }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: var(--surface); }
+  tbody td { padding: 9px 12px; }
+  .td-no   { color: var(--muted); font-size: .7rem; width: 40px; }
+  .td-code { font-family: var(--mono); }
+  .td-time { color: var(--muted); font-size: .73rem; white-space: nowrap; }
+  .td-sess { color: var(--accent); font-size: .73rem; }
+  .td-sync { font-size: .75rem; text-align: center; }
+  .sync-ok      { color: var(--success); }
+  .sync-fail    { color: var(--danger); }
+  .sync-dup     { color: var(--warn); }
+  .sync-sending { color: var(--accent); animation: pulse .7s infinite; }
+  .sync-loaded  { color: var(--muted); }
+
+  .empty-state { text-align: center; padding: 36px; color: var(--muted); font-size: .83rem; }
+
+  /* Loading overlay untuk fetch data awal */
+  #loadingOverlay {
+    display: none; align-items: center; gap: 10px;
+    padding: 12px 14px; border-radius: 8px; font-size: .82rem;
+    background: #131d35; color: var(--accent); border: 1px solid #1e3060;
+    margin-bottom: 12px;
+  }
+  #loadingOverlay.visible { display: flex; }
+  .spinner {
+    width: 14px; height: 14px; border-radius: 50%;
+    border: 2px solid #1e3060; border-top-color: var(--accent);
+    animation: spin .7s linear infinite; flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #queueBadge {
+    display: none; background: var(--warn); color: #0f1117;
+    font-size: .7rem; font-weight: 700; padding: 2px 8px; border-radius: 10px;
+  }
+
+  footer { margin-top: 28px; font-size: .7rem; color: var(--muted); text-align: center; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Scan Logger</h1>
+    <p>Realtime ke Google Sheets via Apps Script</p>
+  </div>
+  <div class="connection-badge">
+    <span class="conn-dot disconnected" id="connDot"></span>
+    <span id="connLabel">Belum terhubung</span>
+  </div>
+</header>
+
+<!-- Setup -->
+<div class="card">
+  <div class="card-title">Koneksi Google Sheets</div>
+  <div class="setup-row">
+    <input id="scriptUrl" type="text" placeholder="Paste Apps Script Web App URL di sini…">
+    <button class="btn btn-primary" onclick="connectAndFetch()" id="connectBtn">Hubungkan</button>
+  </div>
+</div>
+
+<!-- Scan Input -->
+<div class="card">
+  <div class="card-title">Input Scan</div>
+  <div id="loadingOverlay">
+    <span class="spinner"></span>
+    <span id="loadingText">Mengambil data dari Google Sheets…</span>
+  </div>
+  <div class="scan-row">
+    <input id="scanInput" type="text" placeholder="Arahkan scanner ke sini, atau ketik manual…"
+           autofocus autocomplete="off" disabled>
+    <button class="btn btn-primary" onclick="addScan()" id="addBtn" disabled>Tambah</button>
+  </div>
+  <div id="statusBar" class="idle">
+    <span class="status-dot"></span>
+    <span id="statusText">Hubungkan ke Google Sheets terlebih dahulu</span>
+  </div>
+</div>
+
+<!-- Data -->
+<div class="card">
+  <div class="card-title">
+    Data Tersimpan
+    <span id="queueBadge">↺ <span id="queueCount">0</span> pending</span>
+  </div>
+  <div class="session-strip" id="sessionStrip">
+    <button id="newSessionBtn" onclick="newSession()">+ Sesi Baru</button>
+  </div>
+  <div class="stats-row">
+    <div class="stat-box">
+      <div class="stat-num" id="statTotal">0</div>
+      <div class="stat-label">Total Scan</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-num" id="statSession">0</div>
+      <div class="stat-label">Sesi Ini</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-num" id="statSessions">1</div>
+      <div class="stat-label">Jumlah Sesi</div>
+    </div>
+  </div>
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="td-no">No</th>
+          <th>Kode / Barcode</th>
+          <th>Sesi</th>
+          <th>Waktu Scan</th>
+          <th>Created At</th>
+          <th style="text-align:center">Sheets</th>
+        </tr>
+      </thead>
+      <tbody id="scanTableBody">
+        <tr><td colspan="6" class="empty-state">Belum ada data. Mulai scan!</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<footer>Data dikirim realtime ke Google Sheets setiap scan.<br>
+Scan yang gagal terkirim akan di-retry otomatis tiap 15 detik.</footer>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+let sessions   = [{ id: 1, label: 'Sesi #1', startedAt: new Date() }];
+let activeIdx  = 0;
+let scans      = [];    // semua data (loaded dari sheet + scan baru)
+let globalNo   = 0;
+let scriptUrl  = '';
+let retryQueue = [];
+// Set kode yang sudah ada di sheet (untuk deduplikasi cross-sesi dari data lama)
+// Format key: `${sessionLabel}||${code}`
+let existingKeys = new Set();
+
+// ── Connect & Fetch existing data via JSONP ───────────────────────────────────
+// Fetch biasa diblokir CORS saat buka dari file://
+// JSONP: inject <script src="url?callback=fn"> → browser izinkan cross-origin
+function connectAndFetch() {
+  const url = document.getElementById('scriptUrl').value.trim();
+  if (!url.startsWith('https://script.google.com')) {
+    document.getElementById('scriptUrl').className = 'invalid';
+    showStatus('err', 'URL tidak valid. Harus diawali https://script.google.com/...');
+    return;
+  }
+
+  setConnState('connecting');
+  document.getElementById('connectBtn').disabled = true;
+  showLoading('Menghubungkan dan mengambil data dari Sheets…');
+
+  // Nama callback unik agar tidak konflik jika dipanggil ulang
+  const cbName = '_gsCb_' + Date.now();
+  let timedOut  = false;
+
+  // Timeout 15 detik
+  const timer = setTimeout(() => {
+    timedOut = true;
+    cleanup(cbName);
+    setConnState('disconnected');
+    hideLoading();
+    document.getElementById('connectBtn').disabled = false;
+    showStatus('err', 'Timeout — Apps Script tidak merespons. Pastikan deployment aktif.');
+  }, 15000);
+
+  // Daftarkan callback global
+  window[cbName] = function(json) {
+    if (timedOut) return;
+    clearTimeout(timer);
+    cleanup(cbName);
+
+    if (json.status !== 'ok') {
+      setConnState('disconnected');
+      hideLoading();
+      document.getElementById('connectBtn').disabled = false;
+      showStatus('err', `Error dari Sheets: ${json.message}`);
+      return;
+    }
+
+    scriptUrl = url;
+    document.getElementById('scriptUrl').className = 'valid';
+    setConnState('connected');
+    loadExistingData(json.data || []);
+    hideLoading();
+    enableInput();
+    showStatus('ok', `Terhubung — ${(json.data || []).length} data dimuat dari Sheets.`);
+  };
+
+  // Inject script tag dengan callback parameter
+  const script = document.createElement('script');
+  script.src   = `${url}?callback=${cbName}`;
+  script.onerror = function() {
+    if (timedOut) return;
+    clearTimeout(timer);
+    cleanup(cbName);
+    setConnState('disconnected');
+    hideLoading();
+    document.getElementById('connectBtn').disabled = false;
+    showStatus('err', 'Gagal memuat script. Periksa URL dan koneksi internet.');
+  };
+  document.head.appendChild(script);
+}
+
+function cleanup(cbName) {
+  delete window[cbName];
+  const old = document.querySelector(`script[src*="${cbName}"]`);
+  if (old) old.remove();
+}
+
+function loadExistingData(rows) {
+  // Bangun set kode existing untuk deduplikasi
+  existingKeys.clear();
+  scans = [];
+
+  rows.forEach(r => {
+    const key = `${r.sessionLabel}||${r.code}`;
+    existingKeys.add(key);
+
+    scans.push({
+      no:           r.no,
+      code:         r.code,
+      sessionLabel: r.sessionLabel,
+      time:         r.time,
+      createdAt:    r.createdAt,
+      syncStatus:   'loaded', // sudah ada di sheet
+    });
+
+    // Rekonstruksi sesi dari data sheet jika belum ada
+    if (!sessions.find(s => s.label === r.sessionLabel)) {
+      const n = sessions.length + 1;
+      sessions.push({ id: n, label: r.sessionLabel, startedAt: new Date() });
+    }
+  });
+
+  globalNo = scans.length;
+  renderSessionChips();
+  renderTable();
+  updateStats();
+}
+
+// ── Add scan ─────────────────────────────────────────────────────────────────
+function addScan() {
+  const raw = input.value.trim();
+  if (!raw) { showStatus('err', 'Input kosong.'); return; }
+  if (!scriptUrl) { showStatus('err', 'Hubungkan ke Google Sheets dulu.'); return; }
+
+  const sess = sessions[activeIdx];
+  const key  = `${sess.label}||${raw}`;
+
+  // Cek duplikat: dari sesi aktif (lokal) ATAU dari data sheet yang dimuat
+  const isDupLocal  = scans.some(s => s.sessionId === sess.id && s.code === raw);
+  const isDupSheet  = existingKeys.has(key);
+
+  if (isDupLocal || isDupSheet) {
+    input.value = '';
+    input.classList.add('flash-err');
+    setTimeout(() => input.classList.remove('flash-err'), 300);
+    showStatus('warn', `Duplikat di ${sess.label} — "${raw}" sudah terscan.`);
+    return;
+  }
+
+  const now = new Date();
+  globalNo++;
+  const scan = {
+    no:           globalNo,
+    code:         raw,
+    sessionId:    sess.id,
+    sessionLabel: sess.label,
+    time:         now.toLocaleTimeString('id-ID', { hour12: false }),
+    createdAt:    now.toLocaleString('id-ID', {
+                    day: '2-digit', month: '2-digit', year: 'numeric',
+                    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+                  }),
+    syncStatus: 'sending',
+  };
+
+  scans.push(scan);
+  existingKeys.add(key); // langsung tandai agar scan berikutnya tidak duplikat
+
+  input.value = '';
+  input.classList.add('flash-ok');
+  setTimeout(() => input.classList.remove('flash-ok'), 300);
+
+  showStatus('sending', `Mengirim scan #${globalNo} ke Sheets…`);
+  renderTable();
+  updateStats();
+  sendToSheet(scan);
+}
+
+// ── Send to Sheets ───────────────────────────────────────────────────────────
+// POST pakai no-cors → response opaque, tidak bisa dibaca.
+// Deduplikasi sudah ditangani di browser (existingKeys), aman anggap sukses jika tidak throw.
+async function sendToSheet(scan, isRetry = false) {
+  try {
+    await fetch(scriptUrl, {
+      method:  'POST',
+      mode:    'no-cors',
+      headers: { 'Content-Type': 'text/plain' },
+      body:    JSON.stringify({
+        code:         scan.code,
+        sessionLabel: scan.sessionLabel,
+        time:         scan.time,
+        createdAt:    scan.createdAt,
+      }),
+    });
+
+    scan.syncStatus = 'ok';
+    if (isRetry) removeFromQueue(scan.no);
+    showStatus('ok', `Scan #${scan.no} terkirim ke Sheets.`);
+
+  } catch (err) {
+    scan.syncStatus = 'fail';
+    if (!isRetry) retryQueue.push(scan);
+    updateQueueBadge();
+    showStatus('err', `Gagal kirim scan #${scan.no}. Akan di-retry otomatis.`);
+  }
+
+  renderTable();
+}
+
+// ── Retry ─────────────────────────────────────────────────────────────────────
+function removeFromQueue(no) {
+  retryQueue = retryQueue.filter(s => s.no !== no);
+  updateQueueBadge();
+}
+function updateQueueBadge() {
+  const badge = document.getElementById('queueBadge');
+  document.getElementById('queueCount').textContent = retryQueue.length;
+  badge.style.display = retryQueue.length > 0 ? 'inline' : 'none';
+}
+setInterval(() => {
+  if (!retryQueue.length || !scriptUrl) return;
+  retryQueue.forEach(s => { s.syncStatus = 'sending'; sendToSheet(s, true); });
+  renderTable();
+}, 15000);
+
+// ── Sessions ─────────────────────────────────────────────────────────────────
+function newSession() {
+  const n = sessions.length + 1;
+  sessions.push({ id: n, label: `Sesi #${n}`, startedAt: new Date() });
+  activeIdx = sessions.length - 1;
+  renderSessionChips();
+  updateStats();
+  showStatus('info', `Sesi #${n} dimulai.`);
+  input.focus();
+}
+function switchSession(idx) {
+  activeIdx = idx;
+  renderSessionChips();
+  updateStats();
+}
+function renderSessionChips() {
+  const strip = document.getElementById('sessionStrip');
+  strip.querySelectorAll('.session-chip').forEach(c => c.remove());
+  const btn = document.getElementById('newSessionBtn');
+  sessions.forEach((s, i) => {
+    const chip = document.createElement('button');
+    chip.className = 'session-chip ' + (i === activeIdx ? 'active' : 'inactive');
+    chip.textContent = s.label;
+    chip.onclick = () => switchSession(i);
+    strip.insertBefore(chip, btn);
+  });
+}
+
+// ── Table ─────────────────────────────────────────────────────────────────────
+const syncMeta = {
+  ok:      { cls: 'sync-ok',      icon: '✓', tip: 'Tersimpan di Sheets' },
+  loaded:  { cls: 'sync-loaded',  icon: '●', tip: 'Dimuat dari Sheets'  },
+  sending: { cls: 'sync-sending', icon: '…', tip: 'Mengirim…'           },
+  fail:    { cls: 'sync-fail',    icon: '✗', tip: 'Gagal — pending retry'},
+  dup:     { cls: 'sync-dup',     icon: '≠', tip: 'Duplikat di server'  },
+};
+function renderTable() {
+  const tbody = document.getElementById('scanTableBody');
+  if (!scans.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Belum ada data.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = [...scans].reverse().map(s => {
+    const m = syncMeta[s.syncStatus] || syncMeta.loaded;
+    return `<tr>
+      <td class="td-no">${s.no}</td>
+      <td class="td-code">${escHtml(s.code)}</td>
+      <td class="td-sess">${s.sessionLabel}</td>
+      <td class="td-time">${s.time}</td>
+      <td class="td-time">${s.createdAt}</td>
+      <td class="td-sync ${m.cls}" title="${m.tip}">${m.icon}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+function updateStats() {
+  const sessId = sessions[activeIdx].id;
+  document.getElementById('statTotal').textContent    = scans.length;
+  document.getElementById('statSession').textContent  = scans.filter(s => s.sessionId === sessId).length;
+  document.getElementById('statSessions').textContent = sessions.length;
+}
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
+const input = document.getElementById('scanInput');
+input.addEventListener('keydown', e => { if (e.key === 'Enter') addScan(); });
+
+function setConnState(state) {
+  const dot = document.getElementById('connDot');
+  const lbl = document.getElementById('connLabel');
+  dot.className = `conn-dot ${state}`;
+  lbl.textContent = state === 'connected' ? 'Terhubung' : state === 'connecting' ? 'Menghubungkan…' : 'Tidak terhubung';
+}
+function enableInput() {
+  input.disabled = false;
+  document.getElementById('addBtn').disabled = false;
+  document.getElementById('connectBtn').disabled = false;
+  input.focus();
+}
+function showLoading(msg) {
+  const el = document.getElementById('loadingOverlay');
+  document.getElementById('loadingText').textContent = msg;
+  el.classList.add('visible');
+}
+function hideLoading() {
+  document.getElementById('loadingOverlay').classList.remove('visible');
+}
+
+let _stTimer;
+function showStatus(type, msg) {
+  const bar = document.getElementById('statusBar');
+  bar.className = type;
+  document.getElementById('statusText').textContent = msg;
+  clearTimeout(_stTimer);
+  if (!['idle','err'].includes(type)) {
+    _stTimer = setTimeout(() => {
+      bar.className = 'idle';
+      document.getElementById('statusText').textContent = 'Siap menerima scan — tekan Enter setelah setiap scan';
+    }, 3500);
+  }
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+renderSessionChips();
+renderTable();
+updateStats();
+</script>
+</body>
+</html>
